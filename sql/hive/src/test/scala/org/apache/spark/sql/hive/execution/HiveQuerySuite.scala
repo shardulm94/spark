@@ -1227,7 +1227,7 @@ class HiveQuerySuite extends HiveComparisonTest with SQLTestUtils with BeforeAnd
       // do not include transitive dependencies as some do not exist on mavencentral
       // and hence cannot be found in the test environment
       sql(s"ADD JAR ivy://org.apache.hive.hcatalog:hive-hcatalog-core:$hiveVersion" +
-        "?transitive=false")
+        "?exclude=org.pentaho:pentaho-aggdesigner-algorithm")
       sql(
         """CREATE TABLE t(a string, b string)
           |ROW FORMAT SERDE 'org.apache.hive.hcatalog.data.JsonSerDe'""".stripMargin)
