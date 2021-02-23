@@ -811,7 +811,6 @@ private[spark] class Client(
         props.setProperty("spark.jars.ivySettings", s"$LOCALIZED_CONF_DIR/$amIvySettingsFileName")
       }
 
-
       writePropertiesToArchive(props, SPARK_CONF_FILE, confStream)
 
       // Write the distributed cache config to the archive.
