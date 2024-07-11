@@ -19,6 +19,8 @@ package org.apache.spark.sql.catalyst.parser
 
 import java.util.Locale
 
+import scala.jdk.CollectionConverters._
+
 import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.catalyst.analysis._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Hex, Literal}
@@ -28,6 +30,7 @@ import org.apache.spark.sql.connector.expressions.{ApplyTransform, BucketTransfo
 import org.apache.spark.sql.connector.expressions.LogicalExpressions.bucket
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{Decimal, IntegerType, LongType, StringType, StructType, TimestampType}
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.storage.StorageLevelMapper
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
@@ -1779,6 +1782,14 @@ class DDLParserSuite extends AnalysisTest {
         stop = 56))
   }
 
+  test("delete from table: with options") {
+    parseCompare("DELETE FROM testcat.ns1.ns2.tbl WITH ('a' = 'b', 'c' = 'd')",
+      DeleteFromTable(UnresolvedRelation(
+          Seq("testcat", "ns1", "ns2", "tbl"),
+          new CaseInsensitiveStringMap(Map("a" -> "b", "c" -> "d").asJava)),
+        Literal.TrueLiteral))
+  }
+
   test("update table: basic") {
     parseCompare(
       """
@@ -1819,6 +1830,21 @@ class DDLParserSuite extends AnalysisTest {
         fragment = sql,
         start = 0,
         stop = 70))
+  }
+
+  test("update table: with options") {
+    parseCompare(
+      """
+        |UPDATE testcat.ns1.ns2.tbl WITH ('a' = 'b', 'c' = 'd')
+        |SET a='Robert', b=32
+      """.stripMargin,
+      UpdateTable(
+        UnresolvedRelation(
+          Seq("testcat", "ns1", "ns2", "tbl"),
+          new CaseInsensitiveStringMap(Map("a" -> "b", "c" -> "d").asJava)),
+        Seq(Assignment(UnresolvedAttribute("a"), Literal("Robert")),
+          Assignment(UnresolvedAttribute("b"), Literal(32))),
+        None))
   }
 
   test("merge into table: basic") {

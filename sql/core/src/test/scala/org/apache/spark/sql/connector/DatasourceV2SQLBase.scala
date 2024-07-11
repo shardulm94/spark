@@ -20,7 +20,7 @@ package org.apache.spark.sql.connector
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.connector.catalog.{CatalogPlugin, InMemoryCatalog, InMemoryPartitionTableCatalog, InMemoryTableWithV2FilterCatalog, StagingInMemoryTableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, InMemoryCatalog, InMemoryPartitionTableCatalog, InMemoryRowLevelOperationTableCatalog, InMemoryTableWithV2FilterCatalog, StagingInMemoryTableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -41,6 +41,7 @@ trait DatasourceV2SQLBase
     registerCatalog("testpart", classOf[InMemoryPartitionTableCatalog])
     registerCatalog("testcat_atomic", classOf[StagingInMemoryTableCatalog])
     registerCatalog("testcat2", classOf[InMemoryCatalog])
+    registerCatalog("testcat_rowlevel", classOf[InMemoryRowLevelOperationTableCatalog])
     registerCatalog(SESSION_CATALOG_NAME, classOf[InMemoryTableSessionCatalog])
 
     val df = spark.createDataFrame(Seq((1L, "a"), (2L, "b"), (3L, "c"))).toDF("id", "data")

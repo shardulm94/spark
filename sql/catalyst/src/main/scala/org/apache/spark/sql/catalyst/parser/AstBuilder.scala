@@ -466,7 +466,7 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
 
   override def visitDeleteFromTable(
       ctx: DeleteFromTableContext): LogicalPlan = withOrigin(ctx) {
-    val table = createUnresolvedRelation(ctx.identifierReference)
+    val table = createUnresolvedRelation(ctx.identifierReference, Option(ctx.optionsClause))
     val tableAlias = getTableAliasWithoutColumnAlias(ctx.tableAlias(), "DELETE")
     val aliasedTable = tableAlias.map(SubqueryAlias(_, table)).getOrElse(table)
     val predicate = if (ctx.whereClause() != null) {
@@ -478,7 +478,7 @@ class AstBuilder extends DataTypeAstBuilder with SQLConfHelper with Logging {
   }
 
   override def visitUpdateTable(ctx: UpdateTableContext): LogicalPlan = withOrigin(ctx) {
-    val table = createUnresolvedRelation(ctx.identifierReference)
+    val table = createUnresolvedRelation(ctx.identifierReference, Option(ctx.optionsClause))
     val tableAlias = getTableAliasWithoutColumnAlias(ctx.tableAlias(), "UPDATE")
     val aliasedTable = tableAlias.map(SubqueryAlias(_, table)).getOrElse(table)
     val assignments = withAssignments(ctx.setClause().assignmentList())

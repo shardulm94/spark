@@ -30,7 +30,7 @@ import org.apache.spark.sql.catalyst.CurrentUserContext.CURRENT_USER
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.{CannotReplaceMissingTableException, NoSuchDatabaseException, NoSuchNamespaceException, TableAlreadyExistsException}
 import org.apache.spark.sql.catalyst.parser.ParseException
-import org.apache.spark.sql.catalyst.plans.logical.ColumnStat
+import org.apache.spark.sql.catalyst.plans.logical.{ColumnStat, CommandResult}
 import org.apache.spark.sql.catalyst.statsEstimation.StatsEstimationTestBase
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.connector.catalog.{Column => ColumnV2, _}
@@ -41,7 +41,7 @@ import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.execution.FilterExec
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.columnar.InMemoryRelation
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
+import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, DataSourceV2ScanRelation}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.internal.{SQLConf, StaticSQLConf}
 import org.apache.spark.sql.internal.SQLConf.{PARTITION_OVERWRITE_MODE, PartitionOverwriteMode, V2_SESSION_CATALOG_IMPLEMENTATION}
@@ -3544,6 +3544,34 @@ class DataSourceV2SQLSuiteV1Filter
         sql(s"SELECT * FROM $t1 WITH (`split-size`)"))
       assert(noValues.message.contains(
         "Operation not allowed: Values must be specified for key(s): [split-size]"))
+    }
+  }
+
+  test("SPARK-36680: Support Dynamic Table Options in DELETE and UPDATE SQL") {
+    val t1 = s"testcat_rowlevel.table"
+    withTable(t1) {
+      sql(s"CREATE TABLE $t1 (id bigint, data string) USING $v2Format")
+      sql(s"INSERT INTO $t1 VALUES (1, 'a'), (2, 'b')")
+
+      var df = sql(s"DELETE FROM $t1 WITH (`split-size` = 5) WHERE id > 1")
+      var commandPlan = df.queryExecution.commandExecuted
+        .asInstanceOf[CommandResult].commandLogicalPlan
+      var collected = commandPlan.collect {
+        case r: DataSourceV2Relation =>
+          assert(r.options.get("split-size") == "5")
+      }
+      assert (collected.size == 1)
+      checkAnswer(sql(s"SELECT * FROM $t1"), Seq(Row(1, "a")))
+
+      df = sql(s"UPDATE $t1 WITH (`split-size` = 5) SET id = 3, data = 'abc'")
+      commandPlan = df.queryExecution.commandExecuted
+        .asInstanceOf[CommandResult].commandLogicalPlan
+      collected = commandPlan.collect {
+        case r: DataSourceV2Relation =>
+          assert(r.options.get("split-size") == "5")
+      }
+      assert (collected.size == 1)
+      checkAnswer(sql(s"SELECT * FROM $t1"), Seq(Row(3, "abc")))
     }
   }
 
