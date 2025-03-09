@@ -2114,6 +2114,13 @@ object SQLConf {
       .intConf
       .createWithDefault(-1)
 
+  val EXPAND_USE_SWITCH_CASE =
+    buildConf("spark.sql.codegen.expand.useSwitchCase")
+      .internal()
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(true)
+
   val FILES_MAX_PARTITION_BYTES = buildConf("spark.sql.files.maxPartitionBytes")
     .doc("The maximum number of bytes to pack into a single partition when reading files. " +
       "This configuration is effective only when using file-based sources such as Parquet, JSON " +
@@ -6801,6 +6808,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def legacyEvalCurrentTime: Boolean = getConf(SQLConf.LEGACY_EVAL_CURRENT_TIME)
 
   def legacyOutputSchema: Boolean = getConf(SQLConf.LEGACY_KEEP_COMMAND_OUTPUT_SCHEMA)
+
+  def expandUseSwitchCase: Boolean = getConf(SQLConf.EXPAND_USE_SWITCH_CASE)
 
   /** ********************** SQLConf functionality methods ************ */
 

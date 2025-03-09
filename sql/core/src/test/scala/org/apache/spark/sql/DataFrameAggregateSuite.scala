@@ -428,6 +428,46 @@ class DataFrameAggregateSuite extends QueryTest
     )
   }
 
+  test("mytest") {
+    sql("SET spark.sql.shuffle.partitions=2")
+    sql("SET spark.sql.adaptive.enabled=false")
+    sql("SET spark.sql.codegen.expand.useSwitchCase=false")
+    spark.range(1000)
+      .withColumn("country",
+        expr("CASE WHEN id < 100 THEN 'A' WHEN id < 500 THEN 'B' ELSE 'C' END"))
+      .withColumn("filterCol1", $"id" < 1)
+      .withColumn("filterCol2", $"id" < 2)
+      .withColumn("filterCol3", $"id" < 3)
+      .withColumn("filterCol4", $"id" < 4)
+      .withColumn("filterCol5", $"id" < 5)
+      .withColumn("filterCol6", $"id" < 6)
+      .withColumn("filterCol7", $"id" < 7)
+      .withColumn("filterCol8", $"id" < 8)
+      .withColumn("filterCol9", $"id" < 9)
+      .withColumn("filterCol10", $"id" < 10)
+      .withColumn("filterCol11", $"id" < 11)
+      .withColumn("filterCol12", $"id" < 12)
+      .withColumn("filterCol13", $"id" < 13)
+      .withColumn("filterCol14", $"id" < 14)
+      .withColumn("filterCol15", $"id" < 15)
+      .withColumn("filterCol16", $"id" < 16)
+      //   .withColumn("filterCol17", $"id" < 17)
+      //   .withColumn("filterCol18", $"id" < 18)
+      .repartition($"id")
+      .createOrReplaceTempView("data")
+
+
+    import org.apache.spark.sql.execution.debug._
+    val df = sql("""
+      SELECT filterCol1, filterCol2, filterCol3, filterCol4, filterCol5, filterCol6,
+             COUNT(DISTINCT id) AS cnt
+      FROM data
+      GROUP BY CUBE(filterCol1, filterCol2, filterCol3, filterCol4, filterCol5, filterCol6)
+    """)
+    df.debugCodegen()
+    df.show(100)
+  }
+
   test("zero count") {
     val emptyTableData = Seq.empty[(Int, Int)].toDF("a", "b")
     checkAnswer(

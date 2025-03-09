@@ -97,6 +97,99 @@ case class ExpandExec(
   override def needCopyResult: Boolean = true
 
   override def doConsume(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
+    if (SQLConf.get.expandUseSwitchCase) {
+      doConsumeSwitchCase(ctx, input, row)
+    } else {
+      doConsumeProjectionMap(ctx, input, row)
+    }
+  }
+  def doConsumeProjectionMap(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
+    val outputColumns = output.indices.map { col =>
+      val firstExpr = projections.head(col)
+      val isNull = ctx.addMutableState(
+        CodeGenerator.JAVA_BOOLEAN,
+        "resultIsNull",
+        v => s"$v = true;")
+      val value = ctx.addMutableState(
+        CodeGenerator.javaType(firstExpr.dataType),
+        "resultValue",
+        v => s"$v = ${CodeGenerator.defaultValue(firstExpr.dataType)};")
+
+      ExprCode(
+        JavaCode.isNullVariable(isNull),
+        JavaCode.variable(value, firstExpr.dataType))
+    }
+
+    // unique projections
+    val projectionMap = projections.flatten.toSet.zipWithIndex.toMap
+    val projectionIsNull = Array.fill[Boolean](projectionMap.size)(true)
+    val projectionValues = Array.fill[Any](projectionMap.size)(null)
+//    projectionMap.foreach { case (expr, i) =>
+//      projectionValues(i) = CodeGenerator.defaultValue(expr.dataType)
+//    }
+
+    val projectionIsNullRef = ctx.addReferenceObj("projectionIsNull", projectionIsNull)
+    val projectionValuesRef = ctx.addReferenceObj("projectionValues", projectionValues)
+
+
+    val (literals, nonLiterals) = projectionMap.partition(_._1.isInstanceOf[Literal])
+    literals.foreach { case (lit, i) =>
+      val value = lit.asInstanceOf[Literal].value
+      projectionIsNull(i) = value == null
+      projectionValues(i) = value
+    }
+
+    lazy val attributeSeq: AttributeSeq = child.output
+    val projectionCode = nonLiterals.map { case (expr, i) =>
+      val boundExpr = BindReferences.bindReference(expr, attributeSeq)
+      val ev = boundExpr.genCode(ctx)
+      s"""
+         |${ev.code}
+         |$projectionIsNullRef[$i] = ${ev.isNull};
+         |$projectionValuesRef[$i] = ${ev.value};
+       """.stripMargin
+    }
+
+    val projectionsToIndex = projections.map { exprs =>
+      exprs.map(projectionMap).toArray
+    }.toArray
+    val projectionsToIndexRef = ctx.addReferenceObj("projectionsToIndex", projectionsToIndex)
+
+    val i = ctx.freshName("i")
+    val updateCodes = output.indices.map { col =>
+      // TODO: Think of how to remove if null condition
+      s"""
+         |${outputColumns(col).isNull} = $projectionIsNullRef[$projectionsToIndexRef[$i][$col]];
+         |if (!${outputColumns(col).isNull}) {
+         |${outputColumns(col).value} =
+         | (${CodeGenerator.typeName(outputColumns(col).value.javaType)})
+         | ((${CodeGenerator.boxedType(CodeGenerator.typeName(outputColumns(col).value.javaType))})
+         |  ($projectionValuesRef[$projectionsToIndexRef[$i][$col]]));
+         |}
+       """.stripMargin
+    }
+
+    val evaluate = evaluateVariables(outputColumns)
+    val numOutput = metricTerm(ctx, "numOutputRows")
+    val rVal = {
+      s"""
+         |
+         |${projectionCode.mkString("\n")}
+         |
+         |$evaluate
+         |for (int $i = 0; $i < ${projections.length}; $i++) {
+         |
+         |  ${updateCodes.mkString("\n")}
+         |
+         |  $numOutput.add(1);
+         |  ${consume(ctx, outputColumns)}
+         |}
+         |""".stripMargin
+    }
+    rVal
+  }
+
+  def doConsumeSwitchCase(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
     /*
      * When the projections list looks like:
      *   expr1A, exprB, expr1C
