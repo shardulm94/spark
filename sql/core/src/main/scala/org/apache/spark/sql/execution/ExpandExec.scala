@@ -21,9 +21,11 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen._
+import org.apache.spark.sql.catalyst.expressions.codegen.CodeGenerator.{JAVA_BOOLEAN, JAVA_BYTE, JAVA_DOUBLE, JAVA_FLOAT, JAVA_INT, JAVA_LONG, JAVA_SHORT}
 import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, UnknownPartitioning}
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.DataType
 
 /**
  * Apply all of the GroupExpressions to every input row, hence we will get
@@ -103,6 +105,21 @@ case class ExpandExec(
       doConsumeProjectionMap(ctx, input, row)
     }
   }
+
+  private def defaultValue(dt: DataType): Any = {
+    val jt = CodeGenerator.javaType(dt)
+    jt match {
+      case JAVA_BOOLEAN => false
+      case JAVA_BYTE => -1.asInstanceOf[Byte]
+      case JAVA_SHORT => -1.asInstanceOf[Short]
+      case JAVA_INT => -1
+      case JAVA_LONG => -1L
+      case JAVA_FLOAT => -1.0f
+      case JAVA_DOUBLE => -1.0
+      case _ => null
+    }
+  }
+
   def doConsumeProjectionMap(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
     val outputColumns = output.indices.map { col =>
       val firstExpr = projections.head(col)
@@ -124,9 +141,9 @@ case class ExpandExec(
     val projectionMap = projections.flatten.toSet.zipWithIndex.toMap
     val projectionIsNull = Array.fill[Boolean](projectionMap.size)(true)
     val projectionValues = Array.fill[Any](projectionMap.size)(null)
-//    projectionMap.foreach { case (expr, i) =>
-//      projectionValues(i) = CodeGenerator.defaultValue(expr.dataType)
-//    }
+    projectionMap.foreach { case (expr, i) =>
+      projectionValues(i) = defaultValue(expr.dataType)
+    }
 
     val projectionIsNullRef = ctx.addReferenceObj("projectionIsNull", projectionIsNull)
     val projectionValuesRef = ctx.addReferenceObj("projectionValues", projectionValues)
@@ -136,7 +153,7 @@ case class ExpandExec(
     literals.foreach { case (lit, i) =>
       val value = lit.asInstanceOf[Literal].value
       projectionIsNull(i) = value == null
-      projectionValues(i) = value
+      if (value != null) projectionValues(i) = value
     }
 
     lazy val attributeSeq: AttributeSeq = child.output
@@ -160,12 +177,10 @@ case class ExpandExec(
       // TODO: Think of how to remove if null condition
       s"""
          |${outputColumns(col).isNull} = $projectionIsNullRef[$projectionsToIndexRef[$i][$col]];
-         |if (!${outputColumns(col).isNull}) {
          |${outputColumns(col).value} =
          | (${CodeGenerator.typeName(outputColumns(col).value.javaType)})
          | ((${CodeGenerator.boxedType(CodeGenerator.typeName(outputColumns(col).value.javaType))})
          |  ($projectionValuesRef[$projectionsToIndexRef[$i][$col]]));
-         |}
        """.stripMargin
     }
 
