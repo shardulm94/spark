@@ -371,13 +371,14 @@ object AggregateBenchmark extends SqlBasedBenchmark {
 //    }
 
     runBenchmark("Expand codegen for aggregate with cubes") {
-      val N = 20 << 15
+      val N = 20 << 10
 
       val benchmark = new Benchmark("expand codegen for cubes", N, output = output,
         minTime = 10.seconds)
 
       def f(numCubeKeys: Int): Unit = {
         val cubeKeys = (1 to numCubeKeys).map(i => col(s"k$i"))
+        // TODO: replace filters with numCubeKeys derived strings
         spark.range(N)
           .selectExpr(
             "id",
@@ -402,18 +403,18 @@ object AggregateBenchmark extends SqlBasedBenchmark {
           .noop()
       }
 
-      Seq(2, 4, 6, 8).foreach(numCubeKeys => {
+      Seq(8, 9, 10, 11).foreach(numCubeKeys => {
         benchmark.addCase(s"codegen = projection map, numCubeKeys = $numCubeKeys") { _ =>
           withSQLConf(SQLConf.EXPAND_USE_SWITCH_CASE.key -> "false") {
             f(numCubeKeys)
           }
         }
 
-        benchmark.addCase(s"codegen = switch case, numCubeKeys = $numCubeKeys") { _ =>
-          withSQLConf(SQLConf.EXPAND_USE_SWITCH_CASE.key -> "true") {
-            f(numCubeKeys)
-          }
-        }
+        // benchmark.addCase(s"codegen = switch case, numCubeKeys = $numCubeKeys") { _ =>
+        //   withSQLConf(SQLConf.EXPAND_USE_SWITCH_CASE.key -> "true") {
+        //     f(numCubeKeys)
+        //   }
+        // }
       })
 
       benchmark.run()

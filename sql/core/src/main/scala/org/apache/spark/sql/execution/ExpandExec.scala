@@ -137,71 +137,74 @@ case class ExpandExec(
         JavaCode.variable(value, firstExpr.dataType))
     }
 
-    // unique projections
-    val projectionMap = projections.flatten.toSet.zipWithIndex.toMap
-    val projectionIsNull = Array.fill[Boolean](projectionMap.size)(true)
-    val projectionValues = Array.fill[Any](projectionMap.size)(null)
-    projectionMap.foreach { case (expr, i) =>
-      projectionValues(i) = defaultValue(expr.dataType)
+    // unique expressions
+    val uniqueExpressions = projections.flatten.toSet.zipWithIndex.toMap
+    val expressionIsNull = Array.fill[Boolean](uniqueExpressions.size)(true)
+    val expressionValues = Array.fill[Any](uniqueExpressions.size)(null)
+    uniqueExpressions.foreach { case (expr, i) =>
+      expressionValues(i) = defaultValue(expr.dataType)
     }
+    val expressionMap = projections.map { exprs =>
+      exprs.map(uniqueExpressions).toArray
+    }.toArray
 
-    val projectionIsNullRef = ctx.addReferenceObj("projectionIsNull", projectionIsNull)
-    val projectionValuesRef = ctx.addReferenceObj("projectionValues", projectionValues)
+    val expressionIsNullRef = ctx.addReferenceObj("expressionIsNull", expressionIsNull)
+    val expressionValuesRef = ctx.addReferenceObj("expressionValues", expressionValues)
+    val expressionMapRef = ctx.addReferenceObj("expressionMap", expressionMap)
 
 
-    val (literals, nonLiterals) = projectionMap.partition(_._1.isInstanceOf[Literal])
+    val (literals, nonLiterals) = uniqueExpressions.partition(_._1.isInstanceOf[Literal])
     literals.foreach { case (lit, i) =>
       val value = lit.asInstanceOf[Literal].value
-      projectionIsNull(i) = value == null
-      if (value != null) projectionValues(i) = value
+      expressionIsNull(i) = value == null
+      if (value != null) expressionValues(i) = value
     }
 
     lazy val attributeSeq: AttributeSeq = child.output
-    val projectionCode = nonLiterals.map { case (expr, i) =>
+    val exprCode = nonLiterals.map { case (expr, i) =>
       val boundExpr = BindReferences.bindReference(expr, attributeSeq)
       val ev = boundExpr.genCode(ctx)
       s"""
          |${ev.code}
-         |$projectionIsNullRef[$i] = ${ev.isNull};
-         |$projectionValuesRef[$i] = ${ev.value};
+         |$expressionIsNullRef[$i] = ${ev.isNull};
+         |$expressionValuesRef[$i] = ${ev.value};
        """.stripMargin
     }
 
-    val projectionsToIndex = projections.map { exprs =>
-      exprs.map(projectionMap).toArray
-    }.toArray
-    val projectionsToIndexRef = ctx.addReferenceObj("projectionsToIndex", projectionsToIndex)
-
     val i = ctx.freshName("i")
+    val expressionIdx = ctx.freshVariable("expressionIdx", classOf[Int])
     val updateCodes = output.indices.map { col =>
-      // TODO: Think of how to remove if null condition
+      // Workaround for Janino Issue #223
+      val colJavaType = CodeGenerator.typeName(outputColumns(col).value.javaType)
+      val colBoxedJavaType = CodeGenerator.boxedType(colJavaType)
+      val cast = if (colJavaType == colBoxedJavaType) {
+        s"($colJavaType)"
+      } else {
+        s"($colJavaType) ($colBoxedJavaType)"
+      }
       s"""
-         |${outputColumns(col).isNull} = $projectionIsNullRef[$projectionsToIndexRef[$i][$col]];
-         |${outputColumns(col).value} =
-         | (${CodeGenerator.typeName(outputColumns(col).value.javaType)})
-         | ((${CodeGenerator.boxedType(CodeGenerator.typeName(outputColumns(col).value.javaType))})
-         |  ($projectionValuesRef[$projectionsToIndexRef[$i][$col]]));
+         |$expressionIdx = $expressionMapRef[$i][$col];
+         |${outputColumns(col).isNull} = $expressionIsNullRef[$expressionIdx];
+         |${outputColumns(col).value} = $cast $expressionValuesRef[$expressionIdx];
        """.stripMargin
     }
 
     val evaluate = evaluateVariables(outputColumns)
     val numOutput = metricTerm(ctx, "numOutputRows")
-    val rVal = {
-      s"""
-         |
-         |${projectionCode.mkString("\n")}
-         |
-         |$evaluate
-         |for (int $i = 0; $i < ${projections.length}; $i++) {
-         |
-         |  ${updateCodes.mkString("\n")}
-         |
-         |  $numOutput.add(1);
-         |  ${consume(ctx, outputColumns)}
-         |}
-         |""".stripMargin
-    }
-    rVal
+    s"""
+        |
+        |${exprCode.mkString("\n")}
+        |
+        |$evaluate
+        |int $expressionIdx = 0;
+        |for (int $i = 0; $i < ${projections.length}; $i++) {
+        |
+        |  ${updateCodes.mkString("\n")}
+        |
+        |  $numOutput.add(1);
+        |  ${consume(ctx, outputColumns)}
+        |}
+        |""".stripMargin
   }
 
   def doConsumeSwitchCase(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
@@ -303,7 +306,7 @@ case class ExpandExec(
     }
 
     val splitThreshold = SQLConf.get.methodSplitThreshold
-    val cases = if (switchCaseExprs.flatMap(_._2.map(_._2.code.length)).sum > splitThreshold) {
+    val cases = if (updateCodes.map(_.length).sum > splitThreshold) {
       switchCaseExprs.zip(updateCodes).map { case ((row, _, inputVars), updateCode) =>
         val paramLength = CodeGenerator.calculateParamLengthFromExprValues(inputVars)
         val maybeSplitUpdateCode = if (CodeGenerator.isValidParamLength(paramLength)) {
@@ -311,14 +314,14 @@ case class ExpandExec(
           val argList = inputVars.map { v =>
             s"${CodeGenerator.typeName(v.javaType)} ${v.variableName}"
           }
-          ctx.addNewFunction(switchCaseFunc,
+          val switchCaseFuncQualified = ctx.addNewFunction(switchCaseFunc,
             s"""
                |private void $switchCaseFunc(${argList.mkString(", ")}) {
                |  $updateCode
                |}
              """.stripMargin)
 
-          s"$switchCaseFunc(${inputVars.map(_.variableName).mkString(", ")});"
+          s"$switchCaseFuncQualified(${inputVars.map(_.variableName).mkString(", ")});"
         } else {
           updateCode
         }

@@ -36,7 +36,7 @@ public abstract class BufferedRowIterator {
   protected UnsafeRow unsafeRow = new UnsafeRow(0);
   private long startTimeNs = System.nanoTime();
 
-  protected int partitionIndex = -1;
+  public int partitionIndex = -1;
 
   public boolean hasNext() throws IOException {
     if (currentRows.isEmpty()) {
